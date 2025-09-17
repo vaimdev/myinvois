@@ -278,12 +278,15 @@ def company_data(invoice, sales_invoice_doc):
         msic_code_full = (
             company_doc.custom_msic_code_
         )  # e.g., "01111: Growing of maize"
-        if ":" in msic_code_full:
+
+        if msic_code_full and ":" in msic_code_full:
             msic_code_code, msic_code_name = [
                 s.strip() for s in msic_code_full.split(":", 1)
             ]
-        else:
+        elif msic_code_full:
             msic_code_code, msic_code_name = msic_code_full.strip(), ""
+        else:
+            msic_code_code, msic_code_name = "", ""
 
         # Create the cbc:IndustryClassificationCode element
         cbc_indclacode = ET.SubElement(
