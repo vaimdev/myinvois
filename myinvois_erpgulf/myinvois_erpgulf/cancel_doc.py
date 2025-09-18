@@ -7,6 +7,20 @@ from frappe import _
 import datetime
 from myinvois_erpgulf.myinvois_erpgulf.taxpayerlogin import get_access_token
 
+def get_api_url(company_abbr, base_url):
+    """There are many api susing in zatca which can be defined by a field in settings"""
+    try:
+        company_doc = frappe.get_doc("Company", {"abbr": company_abbr})
+        if company_doc.custom_integration_type == "Sandbox":
+            url = company_doc.custom_sandbox_url + base_url
+        else:
+            url = company_doc.custom_production_url + base_url
+
+        return url
+
+    except (ValueError, TypeError, KeyError) as e:
+        frappe.throw(_(("get api url" f"error: {str(e)}")))
+        return None
 
 @frappe.whitelist(allow_guest=True)
 def cancel_document_wrapper(doc, method):
@@ -28,8 +42,10 @@ def cancel_document_wrapper(doc, method):
     if accepted_docs and "uuid" in accepted_docs[0]:
         uuid = accepted_docs[0]["uuid"]
     else:
-        frappe.throw(_("UUID not found in accepted documents."))
-
+        frappe.msgprint(
+            _("As per LHDN Regulation,UUID not found in accepted documents.")
+        )
+        return
     if not submission_uid or not uuid:
         frappe.throw(
             _("Missing submission UID or UUID. Cannot proceed with cancellation.")
@@ -54,12 +70,21 @@ def cancel_document_wrapper(doc, method):
     # Check if within 72 hours
     time_diff = current_time - submission_time
     if time_diff.total_seconds() > 72 * 3600:
-        frappe.throw(_("Cancellation not allowed after 72 hours of submission."))
+        frappe.throw(
+            _(
+                "As per LHDN Regulation,Cancellation not allowed after 72 hours of submission."
+            )
+        )
 
-    settings = frappe.get_doc("LHDN Malaysia Setting")
-    token = settings.bearer_token
+    company_name = doc.company
+    settings = frappe.get_doc("Company", company_name)
+    company_abbr = settings.abbr
+    company_doc = frappe.get_doc("Company", {"abbr": company_abbr})
 
-    url = f"https://preprod-api.myinvois.hasil.gov.my/api/v1.0/documents/state/{uuid}/state"
+    token = company_doc.custom_bearer_token
+
+    # url = f"https://preprod-api.myinvois.hasil.gov.my/api/v1.0/documents/state/{uuid}/state"
+    url = get_api_url(company_doc.abbr, f"/api/v1.0/documents/state/{uuid}/state")
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {token}",
@@ -75,9 +100,9 @@ def cancel_document_wrapper(doc, method):
 
         # Retry if token expired or internal server error
         if response.status_code in [401, 500]:
-            get_access_token()
+            get_access_token(company_doc)
             settings.reload()
-            token = settings.bearer_token
+            token = company_doc.custom_bearer_token
             headers["Authorization"] = f"Bearer {token}"
 
             response = requests.put(url, headers=headers, json=payload, timeout=10)
@@ -86,8 +111,8 @@ def cancel_document_wrapper(doc, method):
         if response.status_code == 200:
             frappe.msgprint(_("LHDN document cancelled successfully."))
             frappe.msgprint(_(response.text))
-            # doc.custom_lhdn_status = "Cancelled"
-            # doc.save()  # Optional: show raw response
+            doc.custom_lhdn_status = "Cancelled"
+            doc.db_update()
         else:
             frappe.throw(_("LHDN cancellation failed: {0}").format(response.text))
 

@@ -1,3 +1,4 @@
+# from frappe import _
 app_name = "myinvois_erpgulf"
 app_title = "Myinvois Erpgulf"
 app_publisher = "ERPGulf"
@@ -5,8 +6,6 @@ app_description = "MyInvoice - E-Invoice for Malaysia"
 app_email = "support@erpgulf.com"
 app_license = "mit"
 
-
-from frappe import _
 
 from . import __version__ as app_version
 
@@ -249,7 +248,7 @@ from . import __version__ as app_version
 
 
 doctype_js = {
-    "LHDN Setting": "myinvois_erpgulf/public/js/LHDN_setting.js",
+    # "LHDN Setting": "myinvois_erpgulf/public/js/LHDN_setting.js",
     "Company": "public/js/company.js",
     "Customer": "public/js/customer.js",
     "Purchase Invoice": "public/js/puchase.js",
@@ -266,16 +265,19 @@ doc_events = {
         "before_submit": "myinvois_erpgulf.myinvois_erpgulf.original.validate_before_submit",
         "on_submit": "myinvois_erpgulf.myinvois_erpgulf.original.submit_document_wrapper",
         "on_cancel": "myinvois_erpgulf.myinvois_erpgulf.cancel_doc.cancel_document_wrapper",
+        "after_submit": "myinvois_erpgulf.myinvois_erpgulf.createxml.after_submit",
     },
     "Purchase Invoice": {
         "before_submit": "myinvois_erpgulf.myinvois_erpgulf.submit_purchase.validate_before_submit",
         "on_submit": "myinvois_erpgulf.myinvois_erpgulf.submit_purchase.submit_document_wrapper",
         "on_cancel": "myinvois_erpgulf.myinvois_erpgulf.cancel_doc.cancel_document_wrapper",
+        "after_submit": "myinvois_erpgulf.myinvois_erpgulf.purchase_invoice.after_submit",
     },
 }
 
 # Fixtures
 fixtures = [
+    {"dt": "Workspace", "filters": {"module": "Myinvois Erpgulf"}},
     {"dt": "Custom Field", "filters": [["module", "=", "Myinvois Erpgulf"]]},
     {"dt": "Print Format", "filters": [["module", "=", "Myinvois Erpgulf"]]},
     {"dt": "Property Setter", "filters": [["module", "=", "Myinvois Erpgulf"]]},

@@ -6,7 +6,9 @@ import json
 import re
 from frappe import _  # Importing the translation function
 import frappe
+import requests
 import pyqrcode
+from myinvois_erpgulf.myinvois_erpgulf.taxpayerlogin import get_access_token
 
 
 def get_icv_code(invoice_number):
@@ -69,10 +71,10 @@ def add_billing_reference(invoice, invoice_number, sales_invoice_doc):
         if sales_invoice_doc.custom_invoicetype_code in [
             "02 : Credit Note",
             "03 :  Debit Note",
+            "04 :  Refund Note",
         ]:
             invoice_id = sales_invoice_doc.return_against
-        elif sales_invoice_doc.custom_invoicetype_code == "04 :  Refund Note":
-            invoice_id = sales_invoice_doc.custom_return_against_refund
+
         else:
             invoice_id = get_icv_code(invoice_number)
 
@@ -80,35 +82,11 @@ def add_billing_reference(invoice, invoice_number, sales_invoice_doc):
         if sales_invoice_doc.custom_invoicetype_code in [
             "02 : Credit Note",
             "03 :  Debit Note",
+            "04 :  Refund Note",
         ]:
             doc_id = sales_invoice_doc.return_against
             if not doc_id:
                 frappe.throw(_("No document found in return_against."))
-
-            doc = frappe.get_doc("Sales Invoice", doc_id)
-
-            if hasattr(doc, "custom_submit_response") and doc.custom_submit_response:
-                try:
-                    custom_submit_response = json.loads(doc.custom_submit_response)
-                    accepted_documents = custom_submit_response.get(
-                        "acceptedDocuments", []
-                    )
-                    if accepted_documents:
-                        uuid = accepted_documents[0].get("uuid")
-                        create_element(invoice_document_reference, "cbc:UUID", uuid)
-                    else:
-                        frappe.throw(
-                            _("No accepted documents found in custom_submit_response.")
-                        )
-                except Exception as e:
-                    frappe.throw(
-                        _("Error parsing custom_submit_response: {0}").format(str(e))
-                    )
-
-        elif sales_invoice_doc.custom_invoicetype_code == "04 :  Refund Note":
-            doc_id = sales_invoice_doc.custom_return_against_refund
-            if not doc_id:
-                frappe.throw(_("No document found in custom_return_against_refund."))
 
             doc = frappe.get_doc("Sales Invoice", doc_id)
 
@@ -196,38 +174,56 @@ def add_signature(invoice):
         return None
 
 
-def salesinvoice_data(invoice, sales_invoice_doc):
+def salesinvoice_data(invoice, sales_invoice_doc, company_abbr):
     """Adds the Sales Invoice data to the invoice"""
     try:
         create_element(invoice, "cbc:ID", str(sales_invoice_doc.name))
 
         formatted_date, formatted_time = get_current_utc_datetime()
-        create_element(invoice, "cbc:IssueDate", formatted_date)
-        create_element(invoice, "cbc:IssueTime", formatted_time)
+        create_element(invoice, "cbc:IssueDate", str(formatted_date))
+        create_element(invoice, "cbc:IssueTime", str(formatted_time))
         if not sales_invoice_doc.custom_invoicetype_code:
             frappe.throw("Custom Invoice Type Code is missing! ")
 
-        if sales_invoice_doc.is_return == 1:
+        if (
+            sales_invoice_doc.is_return == 1
+            and sales_invoice_doc.custom_is_return_refund == 0
+        ):
             # Check if the field is already set to "02 : Credit Note"
             if sales_invoice_doc.custom_invoicetype_code not in [
                 "02 : Credit Note",
             ]:
-                frappe.throw(_("Choose the invoice type code as '02 : Credit Note'"))
-        if sales_invoice_doc.custom_is_return_refund == 1:
+                frappe.throw(
+                    _(
+                        "As per LHDN Regulation,Choose the invoice type code as '02 : Credit Note'"
+                    )
+                )
+        if (
+            sales_invoice_doc.custom_is_return_refund == 1
+            and sales_invoice_doc.is_return == 1
+        ):
             # Check if the field is already set to "04 :  Refund Note"
             if sales_invoice_doc.custom_invoicetype_code not in [
                 "04 :  Refund Note",
             ]:
-                frappe.throw(_("Choose the invoice type code as '04 :  Refund Note'"))
+                frappe.throw(
+                    _(
+                        "As per LHDN Regulation,Choose the invoice type code as '04 :  Refund Note'"
+                    )
+                )
         if sales_invoice_doc.is_debit_note == 1:
             # Check if the field is already set to "03 : Debit Note"
             if sales_invoice_doc.custom_invoicetype_code != "03 :  Debit Note":
-                frappe.throw(_("Choose the invoice type code as '03 : Debit Note'"))
+                frappe.throw(
+                    _(
+                        "As per LHDN Regulation,Choose the invoice type code as '03 : Debit Note'"
+                    )
+                )
         raw_invoice_type_code = sales_invoice_doc.custom_invoicetype_code
 
         invoice_type_code = raw_invoice_type_code.split(":")[0].strip()
-        settings = frappe.get_doc("LHDN Malaysia Setting")
-        if settings.certificate_file and settings.version == "1.1":
+        company_doc = frappe.get_doc("Company", {"abbr": company_abbr})
+        if company_doc.custom_certificate_file and company_doc.custom_version == "1.1":
             create_element(
                 invoice,
                 "cbc:InvoiceTypeCode",
@@ -330,7 +326,7 @@ def company_data(invoice, sales_invoice_doc):
         if not address_list:
             frappe.throw(
                 _(
-                    "Invoice requires a proper address. Please add your company address in the Address field."
+                    "As per LHDN Regulation,Invoice requires a proper address. Please add your company address in the Address field."
                 )
             )
 
@@ -379,7 +375,7 @@ def company_data(invoice, sales_invoice_doc):
 
         phone = address.get("phone")
         ET.SubElement(cont_ct, "cbc:Telephone").text = (
-            phone if not is_na(phone) else 60100000000
+            phone if not is_na(phone) else "60100000000"
         )
 
         email = address.get("email_id")
@@ -570,18 +566,32 @@ def customer_data(invoice, sales_invoice_doc):
 
         party_id_1 = ET.SubElement(cac_Party, "cac:PartyIdentification")
         prty_id = ET.SubElement(party_id_1, "cbc:ID", schemeID="TIN")
-        prty_id.text = str(customer_doc.custom_customer_tin_number)
+        prty_id.text = str(sales_invoice_doc.custom_customer_tin_number)
 
         party_identifn_2 = ET.SubElement(cac_Party, "cac:PartyIdentification")
         id_party2 = ET.SubElement(
             party_identifn_2,
             "cbc:ID",
-            schemeID=str(customer_doc.custom_customer__registrationicpassport_type),
+            schemeID=str(
+                sales_invoice_doc.custom_customer__registrationicpassport_type
+            ),
         )
-        id_party2.text = str(
-            customer_doc.custom_customer_registrationicpassport_number
-        )  # Buyer’s Registration / Identification Number / Passport Number
+        customer_doc.custom_customer__registrationicpassport_type = (
+            sales_invoice_doc.custom_customer__registrationicpassport_type
+        )
+        customer_doc.custom_customer_tin_number = (
+            sales_invoice_doc.custom_customer_tin_number
+        )
+        # Save the Customer doc
 
+        id_party2.text = str(
+            sales_invoice_doc.custom_customer_registrationicpassport_number
+        )  # Buyer’s Registration / Identification Number / Passport Number
+        customer_doc.custom_customer_registrationicpassport_number = (
+            sales_invoice_doc.custom_customer_registrationicpassport_number
+        )
+        customer_doc.save(ignore_permissions=True)
+        frappe.db.commit()
         partyid_3 = ET.SubElement(cac_Party, "cac:PartyIdentification")
         value_id3 = ET.SubElement(partyid_3, "cbc:ID", schemeID="SST")
         customer_doc.custom_sst_number = (
@@ -647,6 +657,7 @@ def customer_data(invoice, sales_invoice_doc):
 
         mail_party = ET.SubElement(cont_customer, "cbc:ElectronicMail")
         mail_party.text = str(address.email_id)
+
         return invoice
     except Exception as e:
         frappe.throw(_(f"Error customer data: {str(e)}"))
@@ -663,15 +674,19 @@ def delivery_data(invoice, sales_invoice_doc):
 
         party_id_tin = ET.SubElement(delivery_party, "cac:PartyIdentification")
         tin_id = ET.SubElement(party_id_tin, "cbc:ID", schemeID="TIN")
-        tin_id.text = str(customer_doc.custom_customer_tin_number)
+        tin_id.text = str(sales_invoice_doc.custom_customer_tin_number)
 
         party_id_brn = ET.SubElement(delivery_party, "cac:PartyIdentification")
         brn_id = ET.SubElement(
             party_id_brn,
             "cbc:ID",
-            schemeID=str(customer_doc.custom_customer__registrationicpassport_type),
+            schemeID=str(
+                sales_invoice_doc.custom_customer__registrationicpassport_type
+            ),
         )
-        brn_id.text = str(customer_doc.custom_customer_registrationicpassport_number)
+        brn_id.text = str(
+            sales_invoice_doc.custom_customer_registrationicpassport_number
+        )
 
         if int(frappe.__version__.split(".")[0]) == 13:
             address = frappe.get_doc("Address", sales_invoice_doc.customer_address)
@@ -1153,7 +1168,7 @@ def invoice_line_item(invoice, sales_invoice_doc):
             pri_amnt_item = ET.SubElement(
                 price_item, "cbc:PriceAmount", currencyID="MYR"
             )
-            pri_amnt_item.text = str(abs(single_item.base_rate) - discount_amount)
+            pri_amnt_item.text = str(abs((single_item.base_rate) - discount_amount))
             # frappe.msgprint(f"Set price amount: {pri_amnt_item.text}")
 
             item_pri_ext = ET.SubElement(invoice_line, "cac:ItemPriceExtension")
@@ -1278,7 +1293,7 @@ def item_data_with_template(invoice, sales_invoice_doc):
                 cac_Price, "cbc:PriceAmount", currencyID="MYR"
             )
             cbc_PriceAmount.text = str(
-                abs(single_item.base_price_list_rate) - discount_amount
+                abs((single_item.base_price_list_rate) - discount_amount)
             )
 
             cac_ItemPriceExtension = ET.SubElement(
@@ -1316,27 +1331,90 @@ def xml_structuring(invoice, sales_invoice_doc):
         frappe.throw(_(f"Error in xml structuring: {str(e)}"))
 
 
+def get_api_url(company_abbr, base_url=""):
+    """Return full API URL based on integration type and base URL"""
+    try:
+        company_doc = frappe.get_doc("Company", {"abbr": company_abbr})
+
+        if company_doc.custom_integration_type == "Sandbox":
+            base = company_doc.custom_sandbox_url or ""
+        else:
+            base = company_doc.custom_production_url or ""
+
+        # Clean up slashes to avoid issues
+        return (base.rstrip("/") + "/" + base_url.lstrip("/")).rstrip("/")
+
+    except Exception as e:
+        frappe.throw(f"Error generating API URL: {e}")
+
+
 def generate_qr_code(sales_invoice_doc, status):
-    """Generate QR code for the given Sales Invoice"""
-    # Extract required fields
+    """Generate QR code for the given Sales Invoice that links to verification URL"""
+
     customer_doc = frappe.get_doc("Customer", sales_invoice_doc.customer)
     company_doc = frappe.get_doc("Company", sales_invoice_doc.company)
-    verification_url = (
-        "https://verify.hasil.gov.my/einvoice?ref=" + sales_invoice_doc.name
+    company_abbr = company_doc.abbr
+
+    submit_response = json.loads(sales_invoice_doc.custom_submit_response or "{}")
+    token = company_doc.get("custom_bearer_token")
+    if not token:
+        frappe.throw("Bearer token not found in Company document.")
+
+    submission_uid = submit_response.get("submissionUid")
+    if not submission_uid:
+
+        sales_invoice_doc.custom_lhdn_status = "Failed"
+        sales_invoice_doc.save(ignore_permissions=True)
+        frappe.db.commit()
+        frappe.throw("Getting error from lhdn ,pls check submit response field")
+        # return
+
+    uuid = None
+    if submit_response.get("acceptedDocuments"):
+        uuid = submit_response["acceptedDocuments"][0].get("uuid")
+    if not uuid:
+        # frappe.msgprint("UUID not found ,getting error from lhdn.")
+        pass
+
+    # Build longId API URL
+    longid_api = get_api_url(
+        company_abbr, f"/api/v1.0/documentsubmissions/{submission_uid}"
     )
-    qr_data = {
-        "uin": sales_invoice_doc.name,  # Invoice number
-        "seller_tin": company_doc.custom_company_tin_number,
-        "buyer_tin": customer_doc.custom_customer_tin_number,
-        "date": sales_invoice_doc.posting_date.strftime("%Y-%m-%d"),
-        "total_amount": f"{sales_invoice_doc.base_grand_total:.2f}",
-        "tax_amount": f"{sales_invoice_doc.total_taxes_and_charges:.2f}",
-        "status": status,  # Example status, modify as needed
-        "verification_url": verification_url,
-    }
-    # frappe.throw(f"QR Code generated and saved at {qr_data}")
-    # Serialize to JSON
-    qr_code_payload = json.dumps(qr_data)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    def get_long_id():
+        try:
+            res = requests.get(longid_api, headers=headers, timeout=30)
+            if res.status_code != 200:
+                return None
+            res_data = res.json()
+            if res_data.get("documentSummary"):
+                return res_data["documentSummary"][0].get("longId")
+        except Exception as e:
+            frappe.log_error(str(e), "QR Code Generation: longId request failed")
+        return None
+
+    long_id = get_long_id()
+
+    # Retry once after waiting 30 seconds and refreshing token
+    if not long_id:
+        get_access_token(company_doc.name)  # Regenerate token
+        company_doc.reload()
+        token = company_doc.custom_bearer_token
+        headers["Authorization"] = f"Bearer {token}"
+        long_id = get_long_id()
+
+    if not long_id:
+        return
+
+    # Build final verification URL and generate QR code
+    if company_doc.custom_integration_type == "Sandbox":    
+        verification_url = f"https://preprod.myinvois.hasil.gov.my/{uuid}/share/{long_id}"
+        
+    else:
+        verification_url = f"https://api.myinvois.hasil.gov.my/{uuid}/share/{long_id}"
+
+    qr_code_payload = json.dumps(verification_url)
     # Generate QR code
     qr = pyqrcode.create(qr_code_payload)
 
@@ -1367,6 +1445,36 @@ def attach_qr_code_to_sales_invoice(sales_invoice_doc, qr_image_path):
         }
     )
     qr_file_doc.save(ignore_permissions=True)
+    sales_invoice_doc.db_set("custom_einvoice_qr", qr_file_doc.file_url)
+    sales_invoice_doc.notify_update()
+
+
+def delayed_qr_generation(sales_invoice_name):
+    sales_invoice_doc = frappe.get_doc("Sales Invoice", sales_invoice_name)
+    try:
+        status = "delayed"
+        qr_image_path = generate_qr_code(sales_invoice_doc, status)
+        attach_qr_code_to_sales_invoice(sales_invoice_doc, qr_image_path)
+    except Exception as e:
+        frappe.log_error(str(e), "Delayed QR generation failed")
 
 
 # print(f"QR Code generated and saved at {qr_image_path}")
+def after_submit(sales_invoice_doc):
+    """Run QR generation only if not already attached."""
+    existing_qr = frappe.get_all(
+        "File",
+        filters={
+            "attached_to_doctype": sales_invoice_doc.doctype,
+            "attached_to_name": sales_invoice_doc.name,
+            "file_name": ["like", f"QR_{sales_invoice_doc.name}.png"],
+        },
+    )
+    if not existing_qr:
+        frappe.enqueue(
+            "myinvois_erpgulf.myinvois_erpgulf.createxml.delayed_qr_generation",  # Update this path
+            queue="long",
+            timeout=300,
+            now=False,
+            sales_invoice_name=sales_invoice_doc.name,
+        )
