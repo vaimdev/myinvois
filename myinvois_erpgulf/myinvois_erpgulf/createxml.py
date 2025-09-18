@@ -1041,6 +1041,13 @@ def get_Tax_for_Item(full_string, item):
 def invoice_line_item(invoice, sales_invoice_doc):
     """Adds InvoiceLine elements to the invoice"""
     try:
+        # Check if taxes exist
+        if not sales_invoice_doc.taxes or len(sales_invoice_doc.taxes) == 0:
+            # Handle case with no taxes - use 0% tax rate
+            tax_rate = 0.0
+        else:
+            tax_rate = float(sales_invoice_doc.taxes[0].rate)
+
         # frappe.msgprint("Entering invoice_line_item function")
         for single_item in sales_invoice_doc.items:
             # frappe.msgprint(f"Processing item: {single_item.item_code}")
@@ -1093,7 +1100,7 @@ def invoice_line_item(invoice, sales_invoice_doc):
             tax_amount_item.text = str(
                 abs(
                     round(
-                        (sales_invoice_doc.taxes[0].rate) * single_item.amount / 100, 2
+                        tax_rate * single_item.amount / 100, 2
                     )
                 )
             )
@@ -1108,7 +1115,7 @@ def invoice_line_item(invoice, sales_invoice_doc):
             tax_amnt.text = str(
                 abs(
                     round(
-                        (sales_invoice_doc.taxes[0].rate) * single_item.amount / 100, 2
+                        tax_rate * single_item.amount / 100, 2
                     )
                 )
             )
@@ -1123,7 +1130,7 @@ def invoice_line_item(invoice, sales_invoice_doc):
             cat_item_id.text = raw_invoice_type_code.split(":")[0].strip()
             # cat_item_id.text = str(sales_invoice_doc.custom_zatca_tax_category)
             item_prct = ET.SubElement(tax_cate_item, "cbc:Percent")
-            item_prct.text = str(sales_invoice_doc.taxes[0].rate)
+            item_prct.text = str(tax_rate)
             # frappe.msgprint(
             #     f"Set tax category: ID={cat_item_id.text}, Percent={item_prct.text}"
             # # )
