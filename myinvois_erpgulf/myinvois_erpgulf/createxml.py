@@ -963,12 +963,18 @@ def tax_total_with_template(invoice, sales_invoice_doc):
 def legal_monetary_total(invoice, sales_invoice_doc):
     """Adds LegalMonetaryTotal elements to the invoice"""
     try:
+        # Check if taxes exist
+        if not sales_invoice_doc.taxes or len(sales_invoice_doc.taxes) == 0:
+            # Handle case with no taxes - use 0% tax rate
+            tax_rate = 0.0
+        else:
+            tax_rate = float(sales_invoice_doc.taxes[0].rate)
 
         taxable_amount_1 = sales_invoice_doc.total - sales_invoice_doc.get(
             "discount_amount", 0.0
         )
         tax_amount_without_retention = (
-            taxable_amount_1 * (sales_invoice_doc.taxes[0].rate) / 100
+            taxable_amount_1 * tax_rate / 100
         )
         legal_monetary_total = ET.SubElement(invoice, "cac:LegalMonetaryTotal")
         line_ext_amnt = ET.SubElement(
