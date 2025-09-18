@@ -816,13 +816,20 @@ def allowance_charge_data(invoice, sales_invoice_doc):
 def tax_total(invoice, sales_invoice_doc):
     """Adds TaxTotal, TaxSubtotal, TaxCategory, and TaxScheme elements to the invoice"""
     try:
+        # Check if taxes exist
+        if not sales_invoice_doc.taxes or len(sales_invoice_doc.taxes) == 0:
+            # Handle case with no taxes - use 0% tax rate
+            tax_rate = 0.0
+        else:
+            tax_rate = float(sales_invoice_doc.taxes[0].rate)
+
         taxable_amount = sales_invoice_doc.base_total - sales_invoice_doc.get(
             "base_discount_amount", 0.0
         )
         cac_TaxTotal = ET.SubElement(invoice, "cac:TaxTotal")
         taxamnt = ET.SubElement(cac_TaxTotal, "cbc:TaxAmount", currencyID="MYR")
         tax_amount_without_retention = (
-            taxable_amount * float(sales_invoice_doc.taxes[0].rate) / 100
+            taxable_amount * tax_rate / 100
         )
         taxamnt.text = f"{abs(round(tax_amount_without_retention, 2)):.2f}"
 
@@ -833,7 +840,7 @@ def tax_total(invoice, sales_invoice_doc):
         taxable_amnt.text = str(abs(round(taxable_amount, 2)))
         TaxAmnt = ET.SubElement(cac_TaxSubtotal, "cbc:TaxAmount", currencyID="MYR")
         TaxAmnt.text = str(
-            abs(round(taxable_amount * float(sales_invoice_doc.taxes[0].rate) / 100, 2))
+            abs(round(taxable_amount * tax_rate / 100, 2))
         )
 
         cac_TaxCategory = ET.SubElement(cac_TaxSubtotal, "cac:TaxCategory")
@@ -843,7 +850,7 @@ def tax_total(invoice, sales_invoice_doc):
         cat_id_val.text = raw_item_id_code.split(":")[0].strip()
         # <cbc:Percent>0.00</cbc:Percent><cbc:TaxExemptionReason>NA</cbc:TaxExemptionReason>
         prct = ET.SubElement(cac_TaxCategory, "cbc:Percent")
-        prct.text = str(sales_invoice_doc.taxes[0].rate)
+        prct.text = str(tax_rate)
         exemption = ET.SubElement(cac_TaxCategory, "cbc:TaxExemptionReason")
         if (sales_invoice_doc.custom_zatca_tax_category) == "E":
             exemption.text = sales_invoice_doc.custom_exemption_code
